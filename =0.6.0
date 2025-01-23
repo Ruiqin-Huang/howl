@@ -1,0 +1,7 @@
+Looking in indexes: http://mirrors.aliyun.com/pypi/simple
+Requirement already satisfied: torchvision in /root/miniconda3/envs/howl/lib/python3.6/site-packages (0.11.2)
+Requirement already satisfied: torch==1.10.1 in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torchvision) (1.10.1)
+Requirement already satisfied: numpy in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torchvision) (1.19.5)
+Requirement already satisfied: pillow!=8.3.0,>=5.3.0 in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torchvision) (8.4.0)
+Requirement already satisfied: typing-extensions in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torch==1.10.1->torchvision) (4.1.1)
+Requirement already satisfied: dataclasses in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torch==1.10.1->torchvision) (0.8)

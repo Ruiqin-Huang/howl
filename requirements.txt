@@ -1,18 +1,49 @@
+# 先（在base）安装mamba
 coloredlogs
 dataclasses;python_version<"3.7"
 librosa>=0.8.0
 numpy>=1.18.3
 pandas>=1.0.3
 pocketsphinx
-praat-textgrids==1.3.1
-protobuf==3.19.4 # Protobuf 4.21.0 contains a breaking change for Python, as explained here: https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates
+# praat-textgrids==1.3.1 # 问题一
+# protobuf==3.19.4 # 问题二 # Protobuf 4.21.0 contains a breaking change for Python, as explained here: https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates
 pyaudio
 pydantic>=1.7.3
 pytest==6.2.3
 pytest-timeout==2.1.0
-soundfile==0.10.3.post1
+soundfile==0.10.3.post1 # 问题三, soundfile ==0.10.3.0post1 * does not exist (perhaps a typo or a missing channel).
 tensorboard==2.8.0
-torch==1.10.1
-torchaudio>=0.5.0
-torchvision>=0.6.0
+torch==1.10.1 # 问题四，同三，使用pip install安装
+torchaudio>=0.5.0 # 问题五，使用pip install "torchaudio>=0.5.0"安装
+torchvision>=0.6.0 # 问题五，使用pip install "torchvision>=0.6.0"安装
 tqdm
+
+# 2025-1-21
+# 安装过程中，会遇见很多问题：
+# 推荐先安装mamba（注意，不推荐在howl等子环境中使用conda install mamba命令安装mamba（尝试过，从未成功），
+# 推荐在base环境中安装mamba，这样在所有子环境中也可以使用mamba install命令安装软件包）
+# 然后使用manba install -c conda-forge "..."(加上""防止shell解析错误，并且支持==,>=,<=,>,<)命令[逐个]安装软件包
+
+# 问题一：
+# mamba也安装不了的，使用pip install "..."命令安装
+# 例如：只能使用pip install praat-textgrids==1.3.1安装praat-textgrids==1.3.1
+
+# 问题二：
+# python 3.6与protobuf==3.19.4版本中冲突
+# 使用mamba install protobuf安装protobuf软件包，将安装3.18.0版本
+
+# 问题三：
+# soundfile ==0.10.3.0post1 * does not exist (perhaps a typo or a missing channel).
+# 使用mamba install soundfile后依然报错soundfile =* * does not exist (perhaps a typo or a missing channel).
+# 只能使用pip install soundfile==0.10.3.post1安装soundfile==0.10.3.post1
+
+# 问题四：
+# torch ==1.10.1 * does not exist (perhaps a typo or a missing channel).
+# 解决：使用pip install torch==1.10.1安装torch==1.10.1
+
+# 问题五：
+# 安装完torch1.10.1后，使用pip install "..."安装torchaudio和torchvision
+
+# 【注意】
+# 使用conda list可以展示当前 conda 环境中安装的所有软件包，包括使用conda install，mamba install和pip install 安装的软件包。
+# 但是使用mamba list只能展示使用mamba install(和conda install?)安装的软件包，不能展示使用pip install安装的软件包。

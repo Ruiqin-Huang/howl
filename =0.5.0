@@ -1,0 +1,8 @@
+Looking in indexes: http://mirrors.aliyun.com/pypi/simple
+Collecting torchaudio
+  Downloading http://mirrors.aliyun.com/pypi/packages/a9/4b/f5c4127441dae6fe75f2da89eb203f05c68c30e10ef24a9639d899fbdf66/torchaudio-0.10.1-cp36-cp36m-manylinux1_x86_64.whl (2.9 MB)
+Requirement already satisfied: torch==1.10.1 in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torchaudio) (1.10.1)
+Requirement already satisfied: typing-extensions in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torch==1.10.1->torchaudio) (4.1.1)
+Requirement already satisfied: dataclasses in /root/miniconda3/envs/howl/lib/python3.6/site-packages (from torch==1.10.1->torchaudio) (0.8)
+Installing collected packages: torchaudio
+Successfully installed torchaudio-0.10.1
