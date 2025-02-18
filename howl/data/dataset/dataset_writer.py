@@ -34,7 +34,7 @@ class AudioDatasetMetadataWriter:
     def write(self, metadata: AudioClipMetadata):
         """Writes metadata to disk"""
         metadata = deepcopy(metadata)
-        with metadata.path.with_suffix(".lab").open(self.mode) as metadata_file:
+        with metadata.path.with_suffix(".lab").open(self.mode, encoding='utf-8') as metadata_file:
             metadata_file.write(f"{metadata.transcription}\n")
         metadata.path = metadata.path.name
         self.metadata_json_file.write(metadata.json() + "\n")

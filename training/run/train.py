@@ -6,6 +6,12 @@ import torch.nn.functional as F
 from torch.optim.adamw import AdamW
 from tqdm import tqdm, trange
 
+# TODO: add some imports
+import numpy as np
+import os
+from os import path
+from typing import List
+
 from howl.context import InferenceContext
 from howl.data.common.tokenizer import WakeWordTokenizer
 from howl.data.dataloader import StandardAudioDataLoaderBuilder
@@ -39,76 +45,7 @@ def main():
     # pylint: disable=too-many-statements
     # pylint: disable=duplicate-code
 
-    def evaluate_engine(
-        dataset: WakeWordDataset,
-        prefix: str,
-        save: bool = False,
-        positive_set: bool = False,
-        write_errors: bool = True,
-        mixer: DatasetMixer = None,
-    ):
-        """Evaluate the current model on the given dataset"""
-        audio_transform.eval()
-
-        if use_frame:
-            engine = FrameInferenceEngine(
-                int(SETTINGS.training.max_window_size_seconds * 1000),
-                int(SETTINGS.training.eval_stride_size_seconds * 1000),
-                model,
-                zmuv_transform,
-                ctx,
-            )
-        else:
-            engine = InferenceEngine(model, zmuv_transform, ctx)
-        model.eval()
-        conf_matrix = ConfusionMatrix()
-        pbar = tqdm(dataset, desc=prefix)
-        if write_errors:
-            with (workspace.path / "errors.tsv").open("a") as error_file:
-                print(prefix, file=error_file)
-        for _, ex in enumerate(pbar):
-            if mixer is not None:
-                (ex,) = mixer([ex])
-            audio_data = ex.audio_data.to(device)
-            engine.reset()
-            seq_present = engine.infer(audio_data)
-            if seq_present != positive_set and write_errors:
-                with (workspace.path / "errors.tsv").open("a") as error_file:
-                    error_file.write(
-                        f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\n"
-                    )
-            conf_matrix.increment(seq_present, positive_set)
-            pbar.set_postfix(dict(mcc=f"{conf_matrix.mcc}", c=f"{conf_matrix}"))
-
-        Logger.info(f"{conf_matrix}")
-        if save and not args.eval and positive_set:
-            # TODO: evaluate_engine must be moved outside of the main
-            # pylint: disable=undefined-loop-variable
-            writer.add_scalar(f"{prefix}/Metric/tp_rate", conf_matrix.tp / len(dataset), epoch_idx)
-            workspace.increment_model(model, conf_matrix.tp)
-        if args.eval:
-            threshold = engine.threshold
-            with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a") as result_file:
-                result_file.write(
-                    f"{prefix},{threshold},{conf_matrix.tp},{conf_matrix.tn},{conf_matrix.fp},{conf_matrix.fn}\n"
-                )
-
-    def do_evaluate():
-        """Run evaluation on different datasets"""
-        evaluate_engine(ww_dev_pos_ds, "Dev positive", positive_set=True)
-        evaluate_engine(ww_dev_neg_ds, "Dev negative", positive_set=False)
-        if SETTINGS.training.use_noise_dataset:
-            evaluate_engine(ww_dev_pos_ds, "Dev noisy positive", positive_set=True, mixer=dev_mixer)
-            evaluate_engine(ww_dev_neg_ds, "Dev noisy negative", positive_set=False, mixer=dev_mixer)
-        evaluate_engine(ww_test_pos_ds, "Test positive", positive_set=True)
-        evaluate_engine(ww_test_neg_ds, "Test negative", positive_set=False)
-        if SETTINGS.training.use_noise_dataset:
-            evaluate_engine(
-                ww_test_pos_ds, "Test noisy positive", positive_set=True, mixer=test_mixer,
-            )
-            evaluate_engine(
-                ww_test_neg_ds, "Test noisy negative", positive_set=False, mixer=test_mixer,
-            )
+    
 
     apb = ArgumentParserBuilder()
     apb.add_options(
@@ -120,6 +57,11 @@ def main():
         ArgOption("--eval-freq", type=int, default=10),
         ArgOption("--eval", action="store_true"),
         ArgOption("--use-stitched-datasets", action="store_true"),
+        # TODO: add eval_hop_size
+        ArgOption("--eval-hop-size", type=float, default=0.2),  # 添加 eval_hop_size 参数，默认值为 0.2
+        # TODO: add inference_seq
+        ArgOption("--inference-seq", type=int, nargs="+", default=[0,1],
+             help="推理序列,表示系统会在这些帧中进行检测,例如[0,1], 使用方法为python train.py --inference-seq 0 1 2  # 设置推理序列为 [0, 1, 2]"),
     )
     args = apb.parser.parse_args()
 
@@ -128,7 +70,18 @@ def main():
     use_frame = SETTINGS.training.objective == "frame"
     workspace = Workspace(Path(args.workspace), delete_existing=not args.eval)
     writer = workspace.summary_writer
+    # TODO: modify device to cuda
     device = torch.device(SETTINGS.training.device)
+    device = torch.device("cuda:0" if torch.cuda.is_available() else 'cpu')
+    # 'cuda:0' represents the first available GPU device, 'cuda:1' represents the second available GPU device, and so on.
+    print(f'Using device: {device}')    
+    # verify GPU usage
+    test_tensor = torch.randn(1)
+    print(f"verifying GPU usage......")
+    print(f"Tensor before moving to device: {test_tensor.device}")
+    test_tensor = test_tensor.to(device)
+    print(f"Tensor after moving to device: {test_tensor.device}")
+    
     # endregion prepare training environment
 
     # region load datasets
@@ -260,11 +213,107 @@ def main():
         workspace.load_model(model, best=not args.load_last)
     # endregion prepare model training
 
+    # TODO: set thresholds
+    def round_and_convert_to_str(num):
+            return str(round(num, 2))
+    raw_thresholds = np.arange(0, 1.000001, args.eval_hop_size)
+    thresholds = list(map(round_and_convert_to_str, raw_thresholds))
+
+    # TODO: define evaluate_engine and do_evaluate functions(move from the begining of def main(), to here)
+    def evaluate_engine(
+        dataset: WakeWordDataset,
+        prefix: str,
+        save: bool = False,
+        positive_set: bool = False,
+        write_errors: bool = True,
+        mixer: DatasetMixer = None,
+    ):
+        """Evaluate the current model on the given dataset"""
+        audio_transform.eval()
+
+        if use_frame:
+            engine = FrameInferenceEngine(
+                int(SETTINGS.training.max_window_size_seconds * 1000),
+                int(SETTINGS.training.eval_stride_size_seconds * 1000),
+                model,
+                zmuv_transform,
+                ctx,
+            )
+        else:
+            engine = InferenceEngine(model, zmuv_transform, ctx)
+        # TODO: set threshold
+        for current_threshold in thresholds:
+            engine.set_threshold(float(current_threshold))
+            engine.set_sequence(args.inference_seq)
+            # TODO: 下面直至
+            # with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a", encoding='utf-8') as result_file:
+            #         result_file.write(
+            #             f"{prefix},{threshold},{conf_matrix.tp},{conf_matrix.tn},{conf_matrix.fp},{conf_matrix.fn}\n"
+            #         )
+            # 之间的代码块，向后缩进一个层级
+
+            # TODO: add threshold debug ###############
+            print(f"debug: current Inference Sequence: {engine.sequence}")
+            print(f"debug: current Inference Threshold: {engine.threshold}")
+            ###########################################
+            model.eval()
+            conf_matrix = ConfusionMatrix()
+            pbar = tqdm(dataset, desc=prefix)
+            if write_errors:
+                with (workspace.path / "errors.tsv").open("a") as error_file:
+                    print(prefix, file=error_file)
+            for _, ex in enumerate(pbar):
+                if mixer is not None:
+                    (ex,) = mixer([ex])
+                audio_data = ex.audio_data.to(device)
+                engine.reset()
+                seq_present = engine.infer(audio_data)
+                if seq_present != positive_set and write_errors:
+                            # TODO: add "encoding='utf-8'" 
+                    with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
+                        error_file.write(
+                            f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\n"
+                        )
+                conf_matrix.increment(seq_present, positive_set)
+                pbar.set_postfix(dict(mcc=f"{conf_matrix.mcc}", c=f"{conf_matrix}"))
+
+            Logger.info(f"{conf_matrix}")
+            if save and not args.eval and positive_set:
+                # TODO: evaluate_engine must be moved outside of the main
+                # pylint: disable=undefined-loop-variable
+                writer.add_scalar(f"{prefix}/Metric/tp_rate", conf_matrix.tp / len(dataset), epoch_idx)
+                workspace.increment_model(model, conf_matrix.tp)
+            if args.eval:
+                threshold = engine.threshold
+                # TODO: add "encoding='utf-8'"
+                with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a", encoding='utf-8') as result_file:
+                    result_file.write(
+                        f"{prefix},{threshold},{conf_matrix.tp},{conf_matrix.tn},{conf_matrix.fp},{conf_matrix.fn}\n"
+                    )
+
+    def do_evaluate():
+        """Run evaluation on different datasets"""
+        evaluate_engine(ww_dev_pos_ds, "Dev positive", positive_set=True)
+        evaluate_engine(ww_dev_neg_ds, "Dev negative", positive_set=False)
+        if SETTINGS.training.use_noise_dataset:
+            evaluate_engine(ww_dev_pos_ds, "Dev noisy positive", positive_set=True, mixer=dev_mixer)
+            evaluate_engine(ww_dev_neg_ds, "Dev noisy negative", positive_set=False, mixer=dev_mixer)
+        evaluate_engine(ww_test_pos_ds, "Test positive", positive_set=True)
+        evaluate_engine(ww_test_neg_ds, "Test negative", positive_set=False)
+        if SETTINGS.training.use_noise_dataset:
+            evaluate_engine(
+                ww_test_pos_ds, "Test noisy positive", positive_set=True, mixer=test_mixer,
+            )
+            evaluate_engine(
+                ww_test_neg_ds, "Test noisy negative", positive_set=False, mixer=test_mixer,
+            )
+
     if args.eval:
         Logger.heading("Model evaluation")
         workspace.load_model(model, best=not args.load_last)
-        Logger.info(SETTINGS)
+        Logger.info(SETTINGS)        
         do_evaluate()
+        # 如果设置为--eval，则测试后直接返回，不进行训练等操作
         return
 
     # region train model
@@ -288,6 +337,9 @@ def main():
             audio_length = audio_transform.compute_lengths(batch.lengths)
             zmuv_audio_data = zmuv_transform(audio_transform(batch.audio_data))
             augmented_audio_data = spectrogram_augmentations(zmuv_audio_data)
+            
+            # TODO: tranfer the data to the device
+            
             if use_frame:
                 scores = model(augmented_audio_data, audio_length)
                 loss = criterion(scores, batch.labels)

@@ -3,6 +3,8 @@ from typing import List
 
 from pydantic import BaseSettings
 
+import os 
+
 __all__ = ["AudioSettings", "DatasetSettings", "SETTINGS"]
 
 
@@ -37,13 +39,29 @@ class AudioTransformSettings(BaseSettings):
 
 class InferenceEngineSettings(BaseSettings):
     """Base settings for inference engine"""
+    # 下属为推理引擎的基本设置，实际参数如inference_sequence，inference_threshold使用
+    # engine.set_threshold(float(current_threshold))
+    # engine.set_sequence(current_sequence) 等方法动态设置
 
     inference_weights: List[float] = None
-    inference_sequence: List[int] = [0]
+    inference_sequence: List[int] = [0,1]
+                                    # 推理序列。这个序列表示系统会在这些帧中进行检测。
+    
     inference_window_ms: float = 2000  # look at last of these seconds
+                                    # 推理窗口的长度，以毫秒为单位。
+                                    # 系统会在这个时间窗口内进行检测。例如，2000 毫秒表示
+                                    # 系统会在最近的 2 秒内进行检测。
+    
     smoothing_window_ms: float = 50  # prediction smoothed
     tolerance_window_ms: float = 500  # negative label between words
+                                    # 容忍窗口的长度，以毫秒为单位。在这个时间窗口内，如果检测到负标签
+                                    # （即非唤醒词），系统会容忍并继续检测。例如，500 毫秒表示
+                                    # 系统会在最近的 500 毫秒内容忍负标签。
+
     inference_threshold: float = 0  # positive label probability must rise above this threshold
+                                    # 推理阈值。正标签（即唤醒词）的概率必须超过这个阈值，
+                                    # 系统才会认为检测到了唤醒词。例如，阈值为 0.5 表示
+                                    # 系统只有在检测到唤醒词的概率超过 50% 时，才会认为检测到了唤醒词。
 
 
 class TrainingSettings(BaseSettings):

@@ -13,6 +13,9 @@ from howl.settings import SETTINGS
 from howl.utils import audio_utils
 from howl.utils.logger import Logger
 
+# TODO: add some imports
+from typing import List
+
 __all__ = ["FrameInferenceEngine", "InferenceEngine"]
 
 
@@ -146,16 +149,23 @@ class InferenceEngine:
             predicted label
         """
         # drop out-dated entries
+        # 删除过期预测：移除所有超出平滑窗口(smoothing_window_ms)的历史预测
+        # 保留最近时间窗口内的预测结果
         self.pred_history = list(
             itertools.dropwhile(lambda x: curr_time - x[0] > self.smoothing_window_ms, self.pred_history)
         )
+        # 构建预测矩阵：将时间窗口内所有帧的预测概率垂直堆叠
+        # 形成矩阵形状: [窗口内帧数 × 类别数]
         lattice = np.vstack([t for _, t in self.pred_history])
+        # 获取最大概率：对每个类别，在时间窗口内取最大概率
+        # 选择概率最高的类别作为预测标签
         lattice_max = np.max(lattice, 0)
         max_label = lattice_max.argmax()
         max_prob = lattice_max[max_label]
         if self.coloring:
             max_label = self.coloring.color_map.get(max_label, self.negative_label)
-        if max_prob < self.threshold:
+        # TODO: modify '<' to '<='
+        if max_prob <= self.threshold:
             max_label = self.negative_label
         self.label_history.append((curr_time, max_label))
         return max_label
@@ -172,8 +182,37 @@ class InferenceEngine:
         """
         if curr_time is None:
             curr_time = self.time_provider() * 1000
+        # 将当前帧的预测概率分布和时间戳添加到历史记录中（pred_history），供后续self._get_prediction等方法计算实际标签
         self.pred_history.append((curr_time, prediction))
+        # 调用_get_prediction方法，计算当前时间窗口的预测标签
         return self._get_prediction(curr_time)
+
+    # TODO: add set_threshold function
+    def set_threshold(self, threshold: float):
+        """Set inference threshold
+
+        Args:
+            threshold (float): new threshold value
+
+        Returns:
+            self: for method chaining
+        """
+        self.threshold = threshold
+        return self
+    
+    # TODO: add set_sequence function
+    def set_sequence(self, sequence: List[int]):
+        """Set inference sequence for wake word detection
+
+        Args:
+            sequence (List[int]): New sequence to detect, e.g. [0,1] for two-word sequence
+
+        Returns:
+            self: for method chaining
+        """
+        self.sequence = sequence
+        return self
+    
 
     @torch.no_grad()
     def infer(self, audio_data: torch.Tensor) -> bool:
@@ -259,8 +298,11 @@ class FrameInferenceEngine(InferenceEngine):
         transformed_lengths = self.std.compute_lengths(lengths)
         transformed_frame = self.zmuv(self.std(frame.unsqueeze(0)))
         prediction = self.model(transformed_frame, transformed_lengths).softmax(-1)[0].cpu().numpy()
+        # 使用softmax函数将输出转换为概率
 
+        # 将输出的概率乘以权重
         prediction *= self.inference_weights
+        # 将输出的概率归一化，prediction是模型对当前帧的预测概率分布(numpy数组)
         prediction = prediction / prediction.sum()
         Logger.debug(([f"{probability:.3f}" for probability in prediction.tolist()], np.argmax(prediction)))
         label = self._append_probability_frame(prediction, curr_time=curr_time)

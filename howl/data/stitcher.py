@@ -151,20 +151,21 @@ class WordStitcher(Stitcher):
 
             audio_data = torch.cat([labelled_data.audio_data for labelled_data in sample_set])
 
-            if self.validate_stitched_sample:
-                temp_audio_file_path = "/tmp/temp.wav"
-                soundfile.write(temp_audio_file_path, audio_data.numpy(), self.sample_rate)
+            # TODO: cancel validate_stitched_sample
+            # if self.validate_stitched_sample:
+            #     temp_audio_file_path = "/tmp/temp.wav"
+            #     soundfile.write(temp_audio_file_path, audio_data.numpy(), self.sample_rate)
 
-                keyword_exists = True
-                for detector in self.keyword_detector:
-                    # sphinx keyword detection may not be sufficient for audio with repeated words
-                    if len(detector.detect(temp_audio_file_path)) == 0:
-                        keyword_exists = False
-                        break
+            #     keyword_exists = True
+            #     for detector in self.keyword_detector:
+            #         # sphinx keyword detection may not be sufficient for audio with repeated words
+            #         if len(detector.detect(temp_audio_file_path)) == 0:
+            #             keyword_exists = False
+            #             break
 
-                if keyword_exists:
-                    num_skipped_samples += 1
-                    continue
+            #     if keyword_exists:
+            #         num_skipped_samples += 1
+            #         continue
 
             metatdata = AudioClipMetadata(
                 path=Path(
