@@ -3,7 +3,9 @@ from typing import Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+# TODO: pydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package. See https://docs.pydantic.dev/2.10/migration/#basesettings-has-moved-to-pydantic-settings for more details.
 from pydantic import BaseSettings
+# from pydantic_settings import BaseSettings
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from .base import RegisteredModel

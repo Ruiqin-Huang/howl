@@ -284,7 +284,7 @@ def main():
         
         # 批量数据加载器
         eval_batch_size = 8  # 根据GPU显存大小调整
-        eval_num_workers = 4  # 工作线程数
+        eval_num_workers = 32  # 工作线程数
         eval_dataloader = torch.utils.data.DataLoader(
             dataset, 
             batch_size=eval_batch_size,
@@ -333,34 +333,34 @@ def main():
             model.eval()
             conf_matrix = ConfusionMatrix()
             # pbar-1
-            pbar = tqdm(dataset, desc=prefix)
+            # pbar = tqdm(dataset, desc=prefix)
             # 单样本处理：直接从数据集一次获取一个样本
             # 串行执行：每次只处理一个音频样本
             # 进度条信息：只显示数据集名称（如"Dev positive"）
-            # pbar = tqdm(eval_dataloader, desc=f"{prefix} (阈值={current_threshold})")
+            pbar = tqdm(eval_dataloader, desc=f"{prefix} (阈值={current_threshold})")  # 新代码，批量处理
             # 批量处理：每次处理32个（或自定义数量）样本
             # 并行计算：充分利用GPU并行计算能力
             # 详细进度信息：同时显示数据集名称和当前阈值
-            if write_errors:
-                with (workspace.path / "errors.tsv").open("a") as error_file:
-                    print(prefix, file=error_file)
-            for _, ex in enumerate(pbar):
-                # 一条一条音频数据进行推理
-                if mixer is not None:
-                    (ex,) = mixer([ex])
-                audio_data = ex.audio_data.to(device)
-                engine.reset()
-                seq_present = engine.infer(audio_data)
-                if seq_present != positive_set and write_errors:
-                    # 当模型预测结果与真实标签不完全相符时（seq_present != positive_set），会记录这个错误样本的信息。
-                    with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
-                        error_file.write(
-                            f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\n"
-                        )
-                conf_matrix.increment(seq_present, positive_set)
-                # seq_present为模型预测结果，positive_set为真实标签, 通过conf_matrix.increment更新混淆矩阵
+            for batch in pbar:
+                # 批量处理每个样本
+                for i in range(len(batch)):
+                    ex = batch[i]
+                    # 以下代码与原来基本相同
+                    if mixer is not None:
+                        (ex,) = mixer([ex])
+                    audio_data = ex.audio_data.to(device)
+                    engine.reset()
+                    seq_present = engine.infer(audio_data)
+                    # 其余逻辑与原有代码相同...
+                    if seq_present != positive_set and write_errors:
+                        with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
+                            error_file.write(
+                                f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\n"
+                            )
+                    conf_matrix.increment(seq_present, positive_set)
+                
+                # 更新进度条
                 pbar.set_postfix(dict(mcc=f"{conf_matrix.mcc}", c=f"{conf_matrix}"))
-
             Logger.info(f"{conf_matrix}")
             Logger.info(f"在阈值 {engine.threshold}，推理序列: {engine.sequence}下的详细评估结果:")
             Logger.info(f"真阳性(TP): {conf_matrix.tp}, 真阴性(TN): {conf_matrix.tn}")

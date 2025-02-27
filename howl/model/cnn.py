@@ -1,6 +1,8 @@
 from typing import Tuple
 
+# TODO: pydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package. See https://docs.pydantic.dev/2.10/migration/#basesettings-has-moved-to-pydantic-settings for more details.
 from pydantic import BaseSettings
+# from pydantic_settings import BaseSettings
 from torchvision.models import MobileNetV2, mobilenet_v2
 import torch
 import torch.nn as nn

@@ -1,7 +1,9 @@
 import multiprocessing
 from typing import List
 
+# TODO: pydantic.errors.PydanticImportError: `BaseSettings` has been moved to the `pydantic-settings` package. See https://docs.pydantic.dev/2.10/migration/#basesettings-has-moved-to-pydantic-settings for more details.
 from pydantic import BaseSettings
+# from pydantic_settings import BaseSettings
 
 import os 
 
@@ -76,9 +78,9 @@ class TrainingSettings(BaseSettings):
     device: str = "cuda:0"
     batch_size: int = 16
     lr_decay: float = 0.955
-    max_window_size_seconds: float = 0.75
-    eval_window_size_seconds: float = 0.75
-    eval_stride_size_seconds: float = 0.063
+    max_window_size_seconds: float = 0.75 # 最大窗口大小，以确保计算效率（不一定要长于唤醒词持续时间）
+    eval_window_size_seconds: float = 0.75 # 评估窗口大小，与最大窗口大小相同
+    eval_stride_size_seconds: float = 0.063 # 评估步长大小，确保细粒度评估
     weight_decay: float = 0
     convert_static: bool = False
     objective: str = "frame"  # frame or ctc
@@ -91,8 +93,9 @@ class TrainingSettings(BaseSettings):
 
 class DatasetSettings(BaseSettings):
     """Base settings for dataset"""
-
-    dataset_path: str = None
+    # dataset_path: str = None
+    positive_dataset_path: str = None
+    negative_dataset_path: str = None
 
 
 class HowlSettings:

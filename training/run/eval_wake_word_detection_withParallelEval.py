@@ -29,7 +29,7 @@ from howl.utils.logger import setup_logger, Logger
 def configure_logger(workspace_name):
     """配置日志系统"""
     # 创建日志目录
-    base_workspace_path = Path(os.getcwd()) / f"workspaces/exp_{workspace_name}_res8"
+    base_workspace_path = Path(os.getcwd()) / f"workspaces/exp_{workspace_name}_res8_withParallelEval-test"
     log_dir = base_workspace_path / "logs"
     os.makedirs(log_dir, exist_ok=True)
     
@@ -117,9 +117,9 @@ def is_job_running(grep_command, count_command):
     return num_proc > 0
 
 # 批量运行给定的一组命令，并定期检查每个进程的状态，以便在 GPU 可用时调度下一个作业
-def run_batch_commands(commands, envs, workspace_path, action, grep_command="training.run.train", count_command="python -m training.run.train"):
-    # grep_command：这是用于 ps aux | grep 命令的字符串，用于查找正在运行的进程。默认值是 "training.run.train"。
-    # count_command：这是用于计数的字符串，用于确定有多少个匹配的进程正在运行。默认值是 "python -m training.run.train"。
+def run_batch_commands(commands, envs, workspace_path, action, grep_command="training.run.train_withParallelEval", count_command="python -m training.run.train_withParallelEval"):
+    # grep_command：这是用于 ps aux | grep 命令的字符串，用于查找正在运行的进程。默认值是 "training.run.train_withParallelEval"。
+    # count_command：这是用于计数的字符串，用于确定有多少个匹配的进程正在运行。默认值是 "python -m training.run.train_withParallelEval"。
     """
     run given set of commands with the corresponding environments
     check the status of each process regularly and schedule the next job whenever GPU is availble
@@ -384,7 +384,7 @@ def main():
 
     seeds = []
     def get_workspace_path(workspace_name, seed):
-        return os.getcwd() + f"/workspaces/exp_{workspace_name}_res8/" + str(seed)
+        return os.getcwd() + f"/workspaces/exp_{workspace_name}_res8_withParallelEval-test/" + str(seed)
 
     if args.use_given_model:
         Logger.info("====== use given model in seed list ======")
@@ -421,7 +421,7 @@ def main():
             os.system("mkdir -p " + workspace_path)
             if args.use_stitched_dataset:
                 command = (
-                    "python -m training.run.train --model res8 --workspace " + workspace_path 
+                    "python -m training.run.train_withParallelEval --model res8 --workspace " + workspace_path 
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path 
                     + " --eval-freq " + args.eval_freq
                     + " --eval-hop-size " + str(args.hop_size)
@@ -430,7 +430,7 @@ def main():
                 )
             else:
                 command = (
-                    "python -m training.run.train --model res8 --workspace " + workspace_path 
+                    "python -m training.run.train_withParallelEval --model res8 --workspace " + workspace_path 
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path 
                     + " --eval-freq " + args.eval_freq
                     + " --eval-hop-size " + str(args.hop_size)
@@ -459,7 +459,7 @@ def main():
             workspace_path = get_workspace_path(args.workspace_name, seed)
             if args.use_stitched_dataset:
                 command = (
-                    "python -m training.run.train --eval --model res8 --workspace " + workspace_path
+                    "python -m training.run.train_withParallelEval --eval --model res8 --workspace " + workspace_path
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path
                     + " --eval-hop-size " + str(args.hop_size)
                     + " --device "  + args.device
@@ -467,7 +467,7 @@ def main():
                 )
             else:
                 command = (
-                    "python -m training.run.train --eval --model res8 --workspace " + workspace_path
+                    "python -m training.run.train_withParallelEval --eval --model res8 --workspace " + workspace_path
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path
                     + " --eval-hop-size " + str(args.hop_size)
                     + " --device "  + args.device
@@ -561,7 +561,7 @@ def main():
                     noisy_cols_aggregated[target_metric] = []
 
         # 创建报告文件夹
-        base_workspace_path = os.getcwd() + f"/workspaces/exp_{args.workspace_name}_res8"
+        base_workspace_path = os.getcwd() + f"/workspaces/exp_{args.workspace_name}_res8_withParallelEval-test"
         report_dir = f"{base_workspace_path}/exp_results"
         os.system(f"mkdir -p {report_dir}")
         

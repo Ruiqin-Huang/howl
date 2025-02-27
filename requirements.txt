@@ -1,24 +1,57 @@
-# 先（在base）安装mamba
-coloredlogs
-dataclasses;python_version<"3.7"
-librosa>=0.8.0
-numpy>=1.18.3
-pandas>=1.0.3
-pocketsphinx
-# praat-textgrids==1.3.1 # 问题一
-# protobuf==3.19.4 # 问题二 # Protobuf 4.21.0 contains a breaking change for Python, as explained here: https://developers.google.com/protocol-buffers/docs/news/2022-05-06#python-updates
-pyaudio
-pydantic>=1.7.3
-pytest==6.2.3
-pytest-timeout==2.1.0
-soundfile==0.10.3.post1 # 问题三, soundfile ==0.10.3.0post1 * does not exist (perhaps a typo or a missing channel).
-tensorboard==2.8.0
-torch==1.10.1 # 问题四，同三，使用pip install安装
-torchaudio>=0.5.0 # 问题五，使用pip install "torchaudio>=0.5.0"安装
-torchvision>=0.6.0 # 问题五，使用pip install "torchvision>=0.6.0"安装
-tqdm
+# 20250223 按照安装step重新整理安装依赖顺序及具体方法
+# step 1-安装python
+python==3.6.5 # 使用conda create --prefix /path/to/env python=3.6.5安装 
 
-# 2025-1-21
+# step 2-安装mamba
+# 进入新创建的conda环境，安装mamba（推荐使用-c conda-forge）
+mamba # 使用conda install mamba -c conda-forge安装，将安装mamba-0.17.0版本
+
+# step 3-安装torch及cudatoolkit
+# !!!优先安装torch torchaudio torchvision cudatoolkit，如下：
+pip install torch==1.10.1+cu113 torchaudio==0.10.1+cu113 torchvision==0.11.2+cu113 -f https://download.pytorch.org/whl/torch_stable.html
+# torch==1.10.1cu113 的引号： torch==1.10.1cu113 应该写成 torch==1.10.1+cu113，并且通常不需要引号。cu113 部分是指定 CUDA 版本，应该用 + 连接。
+# -f 指定 PyTorch 的 wheel 文件下载源。 这对于安装特定 CUDA 版本的 PyTorch 非常重要。
+
+# ！！！Deprecated 废弃以下安装torch及cudatoolkit方法 
+# torch==1.10.1 # 使用pip install安装
+# torchaudio>=0.5.0 # 使用pip install "torchaudio>=0.5.0"安装
+# torchvision>=0.6.0 # 使用pip install "torchvision>=0.6.0"安装
+# cudatoolkit # cudatoolkit==11.3 的必要性： 通常，你不需要直接安装 cudatoolkit。 PyTorch 已经包含了它所需要的 CUDA 运行时库。 直接安装 cudatoolkit 可能会导致冲突。
+
+# step 4-安装其他包
+coloredlogs # mamba install coloredlogs，将安装15.0.1版本
+dataclasses # mamba install dataclasses，将安装0.8版本
+librosa>=0.8.0 # pip install "librosa>=0.8.0"，将安装librosa-0.9.2-py3-none-any.whl以及soundfile-0.13.1-py2.py3-none-manylinux_2_28_x86_64.whl
+numpy>=1.18.3 # mamba install "numpy>=1.18.3"，将安装1.19.2版本
+pandas>=1.0.3 # mamba install "pandas>=1.0.3"，将安装1.1.5版本
+pocketsphinx # pip install pocketsphinx，将安装pocketsphinx-5.0.2 sounddevice-0.4.4
+    # 且报错：
+    # ERROR: Could not find a version that satisfies the requirement scikit-build-core (from versions: none)
+    # ERROR: No matching distribution found for scikit-build-core）
+praat-textgrids==1.3.1 # pip install "praat-textgrids==1.3.1"，将安装对应版本
+protobuf==3.19.4 # pip install "protobuf==3.19.4"，将安装对应版本
+pyaudio # mamba install pyaudio，将安装portaudio 19.6.0和pyaudio 0.2.11
+pydantic>=1.7.3 # mamba install "pydantic>=1.7.3"，将安装1.8.2
+pytest==6.2.3 # mamba install "pytest==6.2.3"，将安装对应版本
+pytest-timeout==2.1.0 # pip install "pytest-timeout==2.1.0"，将安装对应版本
+soundfile==0.10.3.post1 # pip install "soundfile==0.10.3.post1"，将卸载soundfile-0.13.1，并安装soundfile-0.10.3.post1
+tensorboard==2.8.0 # pip install "tensorboard==2.8.0"，将安装对应版本
+tqdm # 无论mamba install tqdm还是pip install，已经存在tqdm 4.65.0
+ffmpeg # mamba install ffmpeg，将安装4.2.2版本
+libopenblas-dev  # 对于libopenblas-dev 先安装libopenblas-dev，后移动mfa中的libopenblas.so.0（MFA中的原生lib库不兼容，删除MFA自带的lib库将迫使MFA使用您安装的库）
+# 具体配置方法见下面三行命令
+# sudo apt-get install libopenblas-dev
+# mkdir -p ./montreal-forced-aligner/lib/thirdparty/bin/bak
+# mv ./montreal-forced-aligner/lib/thirdparty/bin/libopenblas.so.0 ./montreal-forced-aligner/lib/thirdparty/bin/bak/libopenblas.so.0
+
+
+# step-5 安装训练模型所需的额外环境
+openpyxl # mamba install openpyxl，将安装3.0.9版本
+pre-commit # pip install pre-commit，将安装pre-commit-2.17.0
+webrtcvad==2.0.10 # pip install "webrtcvad==2.0.10"，将安装对应版本
+
+
+# 2025-1-21 问题记录
 # 安装过程中，会遇见很多问题：
 # 推荐先安装mamba（注意，不推荐在howl等子环境中使用conda install mamba命令安装mamba（尝试过，从未成功），
 # 推荐在base环境中安装mamba，这样在所有子环境中也可以使用mamba install命令安装软件包）
@@ -36,13 +69,8 @@ tqdm
 # soundfile ==0.10.3.0post1 * does not exist (perhaps a typo or a missing channel).
 # 使用mamba install soundfile后依然报错soundfile =* * does not exist (perhaps a typo or a missing channel).
 # 只能使用pip install soundfile==0.10.3.post1安装soundfile==0.10.3.post1
-
-# 问题四：
-# torch ==1.10.1 * does not exist (perhaps a typo or a missing channel).
-# 解决：使用pip install torch==1.10.1安装torch==1.10.1
-
-# 问题五：
-# 安装完torch1.10.1后，使用pip install "..."安装torchaudio和torchvision
+# librosa 0.10.2.post1 requires soundfile>=0.12.1, but you have soundfile 0.10.3.post1 which is incompatible.
+# 最后安装pip install soundfile==0.12.1
 
 # 【注意】
 # 使用conda list可以展示当前 conda 环境中安装的所有软件包，包括使用conda install，mamba install和pip install 安装的软件包。

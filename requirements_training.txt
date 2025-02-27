@@ -1,7 +1,8 @@
-openpyxl
-praat-textgrids==1.3.1 # 问题一，使用pip install "praat-textgrids==1.3.1"安装 
-pre-commit
-webrtcvad==2.0.10
+# ！！！20250223此步骤已经移入requirements.txt一同安装
+# openpyxl
+# praat-textgrids==1.3.1 # 问题一，使用pip install "praat-textgrids==1.3.1"安装 
+# pre-commit
+# webrtcvad==2.0.10
 
 # 同requirements.txt，全部使用mamba install尝试安装即可
 
