@@ -38,6 +38,11 @@ from howl.utils.args_utils import ArgOption, ArgumentParserBuilder
 from howl.utils.logger import setup_logger, Logger
 from howl.workspace import Workspace
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor
+import threading
+import contextlib
+import fcntl
 
 def configure_logger(workspace_path: Path, action="train"):
     """配置训练日志系统"""
@@ -63,6 +68,110 @@ def configure_logger(workspace_path: Path, action="train"):
     return log_file
 # Python 的 logging 模块会在每条日志后自动添加换行符
 # 后续不需要在每次Logger.info .heading的时候手动添加换行符
+
+
+# def acquire_file_lock(file_path):
+#     """获取文件锁"""
+#     lock_file = open(f"{file_path}.lock", 'w')
+#     fcntl.flock(lock_file, fcntl.LOCK_EX)
+#     return lock_file
+
+# def release_file_lock(lock_file):
+#     """释放文件锁"""
+#     fcntl.flock(lock_file, fcntl.LOCK_UN)
+#     lock_file.close()
+
+# # 将函数移至全局作用域
+# def evaluate_engine_threaded(
+#     # 原有参数
+#     dataset, prefix, positive_set, save, write_errors, mixer,
+#     # 新增必要参数，这些原本是从main()作用域中获取的
+#     use_frame, device, model, audio_transform, zmuv_transform, ctx, 
+#     thresholds, args, SETTINGS, workspace, writer=None
+# ):
+#     """线程安全的评估引擎封装函数"""
+#     Logger.info(f"=============== 数据集: {prefix} 开始评估[线程] ===============")
+#     Logger.info(f"数据集大小: {len(dataset)}, 正样本集: {positive_set}, 写入错误: {write_errors}")
+#     try:
+#         Logger.info(f"[线程] 开始评估数据集: {prefix}")
+#          # 线程安全地修改evaluate_engine内部的文件操作
+#         audio_transform.eval()
+        
+#         if use_frame:
+#             engine = FrameInferenceEngine(
+#                 int(SETTINGS.training.max_window_size_seconds * 1000),
+#                 int(SETTINGS.training.eval_stride_size_seconds * 1000),
+#                 model,
+#                 zmuv_transform,
+#                 ctx,
+#             )
+#         else:
+#             engine = InferenceEngine(model, zmuv_transform, ctx)
+        
+#         for current_threshold in thresholds:
+#             engine.set_threshold(float(current_threshold))
+#             model.eval()
+#             conf_matrix = ConfusionMatrix()
+        
+#             # 使用线程安全的方式记录错误信息
+#             if write_errors:
+#                 lock_file = acquire_file_lock(workspace.path / "errors.tsv")
+#                 try:
+#                     with (workspace.path / "errors.tsv").open("a") as error_file:
+#                         print(prefix, file=error_file)
+#                 finally:
+#                     release_file_lock(lock_file)
+                        
+#             pbar = tqdm(dataset, desc=f"{prefix} (阈值={current_threshold})")
+#             for _, ex in enumerate(pbar):
+#                 if mixer is not None:
+#                     (ex,) = mixer([ex])
+#                 audio_data = ex.audio_data.to(device)
+#                 engine.reset()
+#                 seq_present = engine.infer(audio_data)
+                
+#                 # 使用线程安全方式记录错误
+#                 if seq_present != positive_set and write_errors:
+#                     lock_file = acquire_file_lock(workspace.path / "errors.tsv")
+#                     try:
+#                         with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
+#                             error_file.write(
+#                                 f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\t阈值:{current_threshold}\n"
+#                             )
+#                     finally:
+#                         release_file_lock(lock_file)
+                            
+#                 conf_matrix.increment(seq_present, positive_set)
+#                 pbar.set_postfix(dict(mcc=f"{conf_matrix.mcc}", c=f"{conf_matrix}"))
+
+#             Logger.info(f"{prefix} @ {engine.threshold}: {conf_matrix}")
+#             Logger.info(f"在阈值 {engine.threshold}，推理序列: {engine.sequence}下的详细评估结果:")
+#             Logger.info(f"真阳性(TP): {conf_matrix.tp}, 真阴性(TN): {conf_matrix.tn}")
+#             Logger.info(f"假阳性(FP): {conf_matrix.fp}, 假阴性(FN): {conf_matrix.fn}")
+            
+#             if args.eval:
+#                 threshold = engine.threshold
+#                 lock_file = acquire_file_lock(workspace.path / (str(round(threshold, 2)) + "_results.csv"))
+#                 try:
+#                     with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a", encoding='utf-8') as result_file:
+#                         result_file.write(
+#                             f"{prefix},{threshold},{conf_matrix.tp},{conf_matrix.tn},{conf_matrix.fp},{conf_matrix.fn}\n"
+#                         )
+#                 finally:
+#                     release_file_lock(lock_file)
+
+#         Logger.info(f"[线程] 完成评估数据集: {prefix}")
+#         return True
+        
+#     except Exception as e:
+#         Logger.error(f"[线程] 评估数据集 {prefix} 时出错: {str(e)}")
+#         raise
+
+
+# # nullcontext也移至全局作用域
+# @contextlib.contextmanager
+# def nullcontext():
+#     yield
 
 def main():
     """Train or evaluate howl model"""
@@ -112,6 +221,8 @@ def main():
         return str(round(num, 2))
     raw_thresholds = np.arange(0, 1.000001, args.eval_hop_size)
     thresholds = list(map(round_and_convert_to_str, raw_thresholds))
+    # TODO: 设定为只取thresholds的最后n个值，即仅评估最后几个尚未评估完的阈值
+    thresholds = thresholds[-5:] # 取最后5个阈值，即1.0 0.95 0.9 0.85 0.8
     # print the thresholds
     Logger.info(f"model will be evaluated with the following thresholds: {thresholds}")
     
@@ -141,6 +252,8 @@ def main():
         WakeWordDataset(metadata_list=[], set_type=DatasetType.DEV, dataset_split=DatasetSplit.DEV, **ds_kwargs),
         WakeWordDataset(metadata_list=[], set_type=DatasetType.TEST, dataset_split=DatasetSplit.TEST, **ds_kwargs),
     )
+    
+    # 先加载常规数据集（aligned-开头）
     for ds_path in args.dataset_paths:
         ds_path = Path(ds_path)
         train_ds, dev_ds, test_ds = loader.load_splits(ds_path, **ds_kwargs)
@@ -148,9 +261,23 @@ def main():
         ww_dev_ds.extend(dev_ds)
         ww_test_ds.extend(test_ds)
 
-    ww_train_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
-    ww_dev_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
-    ww_test_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
+    # 打印并保存统计信息
+    train_stats = ww_train_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
+    dev_stats = ww_dev_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
+    test_stats = ww_test_ds.print_stats(word_searcher=ctx.searcher, compute_length=True)
+
+    # 可选：将这些统计信息保存到全局变量或配置中，以便其他函数使用
+    total_counts = {
+        "Train positive": str(train_stats.num_examples),
+        "Train length": str(train_stats.audio_length_seconds),
+        "Dev positive": str(dev_stats.num_examples),
+        "Dev length": str(dev_stats.audio_length_seconds),
+        "Test positive": str(test_stats.num_examples),
+        "Test length": str(test_stats.audio_length_seconds),
+    }
+    
+    # TODO: 将得到的total_counts统计信息，特别是关于时间计算的信息写入../workspace/dataset/dataset_stats.json文件中
+    # 以便eval_wake_word_detection.py中生成报告的时候可以直接读取这些统计信息
 
     if args.use_stitched_datasets:
         Logger.heading("Loading stitched datasets")
@@ -160,6 +287,9 @@ def main():
             ds_path = Path(ds_path)
             dataset_loader = HowlAudioDatasetLoader(AudioDatasetType.STITCHED, ds_path)
             try:
+                # 当指定--use-stitched-datasets参数时，会加载stitched数据集
+                # 并且，加载的stitched数据集不会覆盖已加载的常规数据集，而是叠加到同一个集合中。
+                # TODO: 所以，如果希望只加载stitched数据集，需要把aligned-开头的文件内容暂时清空
                 train_ds, dev_ds, test_ds = dataset_loader.load_splits(**ds_kwargs)
                 ww_train_ds.extend(train_ds)
                 ww_dev_ds.extend(dev_ds)
@@ -168,9 +298,19 @@ def main():
                 Logger.error(f"Stitched dataset is missing for {ds_path}: {file_not_found_error}")
 
         header = "w/ stitched"
-        ww_train_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
-        ww_dev_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
-        ww_test_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
+        train_stats_stitched = ww_train_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
+        dev_stats_stitched = ww_dev_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
+        test_stats_stitched = ww_test_ds.print_stats(header=header, word_searcher=ctx.searcher, compute_length=True)
+
+        # 更新统计信息
+        total_counts.update({
+            "Train positive": str(train_stats_stitched.num_examples),
+            "Train length": str(train_stats_stitched.audio_length_seconds),
+            "Dev positive": str(dev_stats_stitched.num_examples),
+            "Dev length": str(dev_stats_stitched.audio_length_seconds),
+            "Test positive": str(test_stats_stitched.num_examples),
+            "Test length": str(test_stats_stitched.audio_length_seconds),
+        })
 
     ww_dev_pos_ds = ww_dev_ds.filter(lambda x: ctx.searcher.search(x.transcription), clone=True)
     ww_dev_pos_ds.print_stats(header="dev_pos", word_searcher=ctx.searcher, compute_length=True)
@@ -261,6 +401,7 @@ def main():
     # 继续训练： 如果你之前已经训练了一部分模型，并且希望从上次中断的地方继续训练，可以使用 load_weights 加载之前保存的模型权重。这可以避免从头开始训练，节省时间和计算资源。
     # 评估模型： 在评估模型时，你可能希望加载之前训练好的模型权重，以便在验证集或测试集上进行评估。这样可以确保评估的是训练好的模型，而不是随机初始化的模型。
 
+    # evaluate_engine，仅用于训练过程中在dev集上评估模型，并执行workspace.increment_model更新最佳模型
     def evaluate_engine(
         dataset: WakeWordDataset,
         prefix: str,
@@ -283,15 +424,15 @@ def main():
         audio_transform.eval()
         
         # 批量数据加载器
-        eval_batch_size = 8  # 根据GPU显存大小调整
-        eval_num_workers = 4  # 工作线程数
-        eval_dataloader = torch.utils.data.DataLoader(
-            dataset, 
-            batch_size=eval_batch_size,
-            shuffle=False, 
-            num_workers=eval_num_workers,
-            pin_memory=True  # 加速CPU到GPU的数据传输
-        )
+        # eval_batch_size = 8  # 根据GPU显存大小调整
+        # eval_num_workers = 4  # 工作线程数
+        # eval_dataloader = torch.utils.data.DataLoader(
+        #     dataset, 
+        #     batch_size=eval_batch_size,
+        #     shuffle=False, 
+        #     num_workers=eval_num_workers,
+        #     pin_memory=True  # 加速CPU到GPU的数据传输
+        # )
         
 
         if use_frame:
@@ -310,8 +451,8 @@ def main():
         else:
             engine = InferenceEngine(model, zmuv_transform, ctx)
         Logger.info(f"使用推理引擎: {engine.__class__.__name__}")
-        Logger.info(f"批处理大小: {eval_batch_size}")
-        Logger.info(f"工作线程数: {eval_num_workers}")
+        # Logger.info(f"批处理大小: {eval_batch_size}")
+        # Logger.info(f"工作线程数: {eval_num_workers}")
         Logger.info(f"最大窗口大小: {SETTINGS.training.max_window_size_seconds}秒")
         Logger.info(f"评估窗口大小: {SETTINGS.training.eval_window_size_seconds}秒")
         Logger.info(f"评估步长: {SETTINGS.training.eval_stride_size_seconds}秒")
@@ -355,7 +496,7 @@ def main():
                     # 当模型预测结果与真实标签不完全相符时（seq_present != positive_set），会记录这个错误样本的信息。
                     with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
                         error_file.write(
-                            f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\n"
+                            f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\t阈值:{current_threshold}\n"
                         )
                 conf_matrix.increment(seq_present, positive_set)
                 # seq_present为模型预测结果，positive_set为真实标签, 通过conf_matrix.increment更新混淆矩阵
@@ -370,8 +511,6 @@ def main():
                 # 只有在 positive_set=True 时（即评估的是正样本集）才会考虑保存模型。这是因为唤醒词系统通常更关注模型在正确识别唤醒词方面的表现，而不是在负样本上的表现。
                 writer.add_scalar(f"{prefix}/Metric/tp_rate", conf_matrix.tp / len(dataset), epoch_idx)
                 workspace.increment_model(model, conf_matrix.tp)
-                Logger.info(f"模型在Dev positive上实现了当前最高真阳性(TP)指标: {conf_matrix.tp}")
-                Logger.info(f"保存该轮次模型为最佳模型model-best.pt.bin")
             if args.eval:
                 threshold = engine.threshold
                 with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a", encoding='utf-8') as result_file:
@@ -380,22 +519,193 @@ def main():
                     )
         Logger.info(f"=============== 数据集: {prefix} 评估完成 ===============")
 
+
+    # 并行评估
+    def evaluate_engine_threaded(
+        dataset: WakeWordDataset,
+        prefix: str,
+        positive_set: bool = False,
+        # positive_set 参数用于指示当前评估的数据集是否为正样本集（包含唤醒词的样本集）。
+        # 当 positive_set=True 时，表示当前评估的样本应该包含唤醒词
+        # 当 positive_set=False 时，表示当前评估的样本不应该包含唤醒词
+        save: bool = False,
+        # save 参数用于控制是否在验证过程中保存模型和记录指标。具体来说，当 save=True 时
+        # 会在验证过程中保存模型: workspace.increment_model(model, conf_matrix.tp)
+        # 并记录指标: writer.add_scalar
+        # 否则只会记录指标，不会保存模型。
+        # 如果当前模型的真阳性(TP)指标比之前保存的模型更好，就会更新保存的"最佳模型"。用于在训练过程中保存最佳模型model-best.pt.bin
+        write_errors: bool = True,
+        mixer: DatasetMixer = None,
+        file_lock: threading.Lock = None
+    ):
+        """Evaluate the current model on the given dataset"""
+        Logger.info(f"=============== 数据集: {prefix} 开始评估[线程] ===============")
+        Logger.info(f"数据集大小: {len(dataset)}, 正样本集: {positive_set}, 写入错误: {write_errors}")
+        try:
+            Logger.info(f"[线程] 开始评估数据集: {prefix}")
+             # 线程安全地修改evaluate_engine内部的文件操作
+            audio_transform.eval()
+            
+            if use_frame:
+                engine = FrameInferenceEngine(
+                    int(SETTINGS.training.max_window_size_seconds * 1000),
+                    int(SETTINGS.training.eval_stride_size_seconds * 1000),
+                    model,
+                    zmuv_transform,
+                    # zmuv_transform是零均值单位方差(Zero Mean Unit Variance)变换
+                    # 它用于标准化音频特征，确保输入模型的数据分布稳定
+                    ctx,
+                    # ctx是推理上下文(InferenceContext)
+                    # 包含词汇表、标记类型和标签映射等基础配置
+                    # zmuv_transform和ctx都是一个与阈值无关的预处理步骤，更换阈值评估时不需要重新加载
+                )
+            else:
+                engine = InferenceEngine(model, zmuv_transform, ctx)
+            
+            for current_threshold in thresholds:
+                engine.set_threshold(float(current_threshold))
+                model.eval()
+                conf_matrix = ConfusionMatrix()
+            
+                # 使用线程安全的方式记录错误信息
+                if write_errors:
+                    with file_lock:
+                        with (workspace.path / "errors.tsv").open("a") as error_file:
+                            print(prefix, file=error_file)
+                            
+                pbar = tqdm(dataset, desc=f"{prefix} (阈值={current_threshold})")
+                for _, ex in enumerate(pbar):
+                    if mixer is not None:
+                        (ex,) = mixer([ex])
+                    audio_data = ex.audio_data.to(device)
+                    engine.reset()
+                    seq_present = engine.infer(audio_data)
+                    
+                    # 使用线程安全方式记录错误
+                    if seq_present != positive_set and write_errors:
+                        with file_lock:
+                            with (workspace.path / "errors.tsv").open("a", encoding='utf-8') as error_file:
+                                error_file.write(
+                                    f"{ex.metadata.transcription}\t{int(seq_present)}\t{int(positive_set)}\t{ex.metadata.path}\t阈值:{current_threshold}\n"
+                                )
+                                
+                    conf_matrix.increment(seq_present, positive_set)
+                    pbar.set_postfix(dict(mcc=f"{conf_matrix.mcc}", c=f"{conf_matrix}"))
+
+                Logger.info(f"{prefix} @ {engine.threshold}: {conf_matrix}")
+                Logger.info(f"在阈值 {engine.threshold}，推理序列: {engine.sequence}下的详细评估结果:")
+                Logger.info(f"真阳性(TP): {conf_matrix.tp}, 真阴性(TN): {conf_matrix.tn}")
+                Logger.info(f"假阳性(FP): {conf_matrix.fp}, 假阴性(FN): {conf_matrix.fn}")
+            
+                # 线程安全方式保存和记录结果
+                if save and not args.eval and positive_set:
+                    with file_lock:
+                        writer.add_scalar(f"{prefix}/Metric/tp_rate", conf_matrix.tp / len(dataset), epoch_idx)
+                        workspace.increment_model(model, conf_matrix.tp)
+                
+                if args.eval:
+                    threshold = engine.threshold
+                    with file_lock:
+                        with (workspace.path / (str(round(threshold, 2)) + "_results.csv")).open("a", encoding='utf-8') as result_file:
+                            result_file.write(
+                                f"{prefix},{threshold},{conf_matrix.tp},{conf_matrix.tn},{conf_matrix.fp},{conf_matrix.fn}\n"
+                            )
+
+            Logger.info(f"[线程] 完成评估数据集: {prefix}")
+            return True
+            
+        except Exception as e:
+            Logger.error(f"[线程] 评估数据集 {prefix} 时出错: {str(e)}")
+            raise
+
+    # 在Python 3.6中创建一个简单的nullcontext (Python 3.7+内置了这个)(已经移动至全局作用域)
+    @contextlib.contextmanager
+    def nullcontext():
+        yield
+
+    # deprecated 单线程串行评估
+    # def do_evaluate():
+    #     """Run evaluation on different datasets"""
+    #     evaluate_engine(ww_dev_pos_ds, "Dev positive", positive_set=True)
+    #     evaluate_engine(ww_dev_neg_ds, "Dev negative", positive_set=False)
+    #     if SETTINGS.training.use_noise_dataset:
+    #         evaluate_engine(ww_dev_pos_ds, "Dev noisy positive", positive_set=True, mixer=dev_mixer)
+    #         evaluate_engine(ww_dev_neg_ds, "Dev noisy negative", positive_set=False, mixer=dev_mixer)
+    #     evaluate_engine(ww_test_pos_ds, "Test positive", positive_set=True)
+    #     evaluate_engine(ww_test_neg_ds, "Test negative", positive_set=False)
+    #     if SETTINGS.training.use_noise_dataset:
+    #         evaluate_engine(
+    #             ww_test_pos_ds, "Test noisy positive", positive_set=True, mixer=test_mixer,
+    #         )
+    #         evaluate_engine(
+    #             ww_test_neg_ds, "Test noisy negative", positive_set=False, mixer=test_mixer,
+    #         )
+
+    # 使用多线程并行评估
     def do_evaluate():
-        """Run evaluation on different datasets"""
-        evaluate_engine(ww_dev_pos_ds, "Dev positive", positive_set=True)
-        evaluate_engine(ww_dev_neg_ds, "Dev negative", positive_set=False)
+        """Run evaluation on different datasets in parallel"""
+        Logger.heading("====== 开始并行评估模型 ======")
+        
+        # 创建文件锁，用于同步文件访问，主要是threshold_results.csv文件的写入
+        file_lock = threading.Lock()
+        # 该所被用于控制多个线程同时写入文件，避免文件写入冲突
+        # 涉及文件包括错误日志文件errors.tsv和阈值结果文件threshold_results.csv
+        # 在保存模型和记录评估指标时，也会使用文件锁
+        # if save and not args.eval and positive_set:
+        #     with file_lock:
+        #         writer.add_scalar(f"{prefix}/Metric/tp_rate", conf_matrix.tp / len(dataset), epoch_idx)
+        #         workspace.increment_model(model, conf_matrix.tp)
+        
+        
+        # 准备评估任务列表
+        # TODO: to avoid thread conflicts, disable writing errors for all datasets
+        eval_tasks = [
+            # 参数分别对应dataset, prefix, positive_set, save, write_errors, mixer
+            (ww_dev_pos_ds, "Dev positive", True, False, True, None),
+            (ww_dev_neg_ds, "Dev negative", False, False, True, None),
+            (ww_test_pos_ds, "Test positive", True, False, True, None),
+            (ww_test_neg_ds, "Test negative", False, False, True, None),
+        ]
+        
         if SETTINGS.training.use_noise_dataset:
-            evaluate_engine(ww_dev_pos_ds, "Dev noisy positive", positive_set=True, mixer=dev_mixer)
-            evaluate_engine(ww_dev_neg_ds, "Dev noisy negative", positive_set=False, mixer=dev_mixer)
-        evaluate_engine(ww_test_pos_ds, "Test positive", positive_set=True)
-        evaluate_engine(ww_test_neg_ds, "Test negative", positive_set=False)
-        if SETTINGS.training.use_noise_dataset:
-            evaluate_engine(
-                ww_test_pos_ds, "Test noisy positive", positive_set=True, mixer=test_mixer,
-            )
-            evaluate_engine(
-                ww_test_neg_ds, "Test noisy negative", positive_set=False, mixer=test_mixer,
-            )
+            eval_tasks.extend([
+                # 参数分别对应dataset, prefix, positive_set, save, write_errors, mixer
+                (ww_dev_pos_ds, "Dev noisy positive", True, False, True, dev_mixer),
+                (ww_dev_neg_ds, "Dev noisy negative", False, False, True, dev_mixer),
+                (ww_test_pos_ds, "Test noisy positive", True, False, True, test_mixer),
+                (ww_test_neg_ds, "Test noisy negative", False, False, True, test_mixer),
+            ])
+        
+        # 并行执行评估任务
+        # 确定线程池大小：最大线程数为评估任务数量
+        max_workers = len(eval_tasks)
+        Logger.info(f"启动并行评估，使用{max_workers}个线程处理{len(eval_tasks)}个评估任务")
+        
+        # TODO: 尝试使用ProcessPoolExecutor，注意监测内存占用情况，避免内存泄漏
+        # with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务到线程池
+            future_to_task = {
+                executor.submit(
+                    evaluate_engine_threaded, 
+                    dataset, prefix, positive_set, save, write_errors, mixer, file_lock
+                ): prefix 
+                for dataset, prefix, positive_set, save, write_errors, mixer in eval_tasks
+            }
+            
+            # 等待所有任务完成并处理结果
+            for future in as_completed(future_to_task):
+                task_name = future_to_task[future]
+                try:
+                    future.result()  # 获取结果，如有异常会重新抛出
+                    Logger.info(f"任务 '{task_name}' 完成")
+                except Exception as exc:
+                    Logger.error(f"任务 '{task_name}' 执行失败: {exc}")
+                    # 记录异常的详细堆栈跟踪
+                    import traceback
+                    Logger.error(traceback.format_exc())
+        
+        Logger.heading("====== 所有评估线程已运行完成 ======")
 
     if args.eval:
         Logger.heading("Model evaluation")
@@ -482,6 +792,10 @@ def main():
         # 调用 evaluate_engine 函数，设置save=True，表示在验证过程中保存模型和记录指标。
         # 由于 save=True，会在验证过程中保存模型: workspace.increment_model(model, conf_matrix.tp) 并记录指标: writer.add_scalar
         # 如果当前模型的真阳性(TP)指标比之前保存的模型更好，就会更新保存的"最佳模型"。用于在训练过程中保存最佳模型model-best.pt.bin
+
+        # evaluate_engine 能够访问 epoch_idx 变量，这是由 Python 的**闭包(closure)**特性实现的。
+        # Python 闭包机制
+        # evaluate_engine 函数定义在 main() 函数内部，这使它成为一个嵌套函数。Python 的闭包机制允许嵌套函数访问其外部作用域中定义的变量，即使在调用时这些变量不是显式传递的参数。
 
     # 如果不指定--eval参数，结束训练后直接退出，不进行模型评估，并打印一边模型信息
     

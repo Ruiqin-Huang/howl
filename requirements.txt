@@ -45,10 +45,14 @@ libopenblas-dev  # 对于libopenblas-dev 先安装libopenblas-dev，后移动mfa
 # mv ./montreal-forced-aligner/lib/thirdparty/bin/libopenblas.so.0 ./montreal-forced-aligner/lib/thirdparty/bin/bak/libopenblas.so.0
 
 
-# step-5 安装训练模型所需的额外环境
+# step-5 安装训练-评估模型所需的额外环境
 openpyxl # mamba install openpyxl，将安装3.0.9版本
 pre-commit # pip install pre-commit，将安装pre-commit-2.17.0
 webrtcvad==2.0.10 # pip install "webrtcvad==2.0.10"，将安装对应版本
+
+# step-6 安装生成实验报告所需的额外环境
+matplotlib # mamba install matplotlib，将安装3.3.4版本
+
 
 
 # 2025-1-21 问题记录

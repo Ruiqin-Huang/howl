@@ -226,14 +226,21 @@ class AudioDataset(tud.Dataset, Generic[GenericTypeT]):
         Args:
             header: additional text message to prepend
             **compute_statistics_kwargs: other arguments passed to compute_statistics
+            
+        Returns:
+            AudioDatasetStatistics: 数据集的统计信息
         """
+        statistics = self.compute_statistics(**compute_statistics_kwargs)
         if header is None:
             log_msg = "Dataset "
         else:
             log_msg = header + " "
-        log_msg += f"({self.dataset_split.value}) - {self.compute_statistics(**compute_statistics_kwargs)}"
+        log_msg += f"({self.dataset_split.value}) - {statistics}"
 
         Logger.info(log_msg)
+        
+        # 返回计算的统计信息
+        return statistics
 
 
 # TODO: to be replaced by RawAudioDataset

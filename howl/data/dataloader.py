@@ -9,7 +9,6 @@ class StandardAudioDataLoaderBuilder:
     def __init__(self, dataset: AudioDataset, num_workers=mp.cpu_count(), collate_fn=None):
         self.dataset = dataset
         self.num_workers = num_workers
-        # self.num_workers = num_workers/2
         self.collate_fn = collate_fn
 
     def build(self, batch_size: int) -> tud.DataLoader:

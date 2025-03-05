@@ -117,17 +117,24 @@ def is_job_running(grep_command, count_command):
     return num_proc > 0
 
 # 批量运行给定的一组命令，并定期检查每个进程的状态，以便在 GPU 可用时调度下一个作业
-def run_batch_commands(commands, envs, workspace_path, action, grep_command="training.run.train", count_command="python -m training.run.train"):
+def run_batch_commands(commands, envs, workspace_path, action, grep_command="training.run.train", count_command="python -m training.run.train", gpu_id=None):
     # grep_command：这是用于 ps aux | grep 命令的字符串，用于查找正在运行的进程。默认值是 "training.run.train"。
     # count_command：这是用于计数的字符串，用于确定有多少个匹配的进程正在运行。默认值是 "python -m training.run.train"。
     """
     run given set of commands with the corresponding environments
     check the status of each process regularly and schedule the next job whenever GPU is availble
+    
+    args help:
+        gpu_id: 指定的GPU ID（如果为None则使用多GPU调度）
     """
     # pylint: disable=subprocess-popen-preexec-fn
     # 检查可用的 GPU 数量
     num_gpu = torch.cuda.device_count()
     Logger.info(f"检测到 {num_gpu} 个可用的 GPU")
+
+    # 如果指定了GPU ID，记录日志
+    if gpu_id is not None:
+        Logger.info(f"所有进程将在GPU {gpu_id} 上运行")
 
     # 每 10 分钟检查一次
     check_up_delay = 600  # check every 10 mins
@@ -140,7 +147,8 @@ def run_batch_commands(commands, envs, workspace_path, action, grep_command="tra
             os.environ[env_key] = env_val
 
         # 如果当前正在运行的进程数量等于 GPU 数量，则等待，直到有 GPU 可用
-        if num_running_jobs == num_gpu:
+        # 如果指定了 GPU ID，则不等待，所有进程将在指定的 GPU 上并行运行
+        if gpu_id is None and num_running_jobs == num_gpu:
             sleep_counter = 0
             while is_job_running(grep_command, count_command):
                 sleep_counter += 1
@@ -151,7 +159,17 @@ def run_batch_commands(commands, envs, workspace_path, action, grep_command="tra
             num_running_jobs = 0
 
         new_env = os.environ.copy()
-        new_env["CUDA_VISIBLE_DEVICES"] = str(num_running_jobs)
+        
+        # 根据是否指定GPU ID来设置CUDA_VISIBLE_DEVICES
+        if gpu_id is not None:
+            # 如果指定了GPU ID，则所有进程都使用该GPU
+            new_env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        else:
+            # 否则使用原始的多GPU调度逻辑
+            new_env["CUDA_VISIBLE_DEVICES"] = str(num_running_jobs)
+        
+        # 限定可用GPU
+        # new_env["CUDA_VISIBLE_DEVICES"] = str(num_running_jobs)
         # python中的subprocess详解：https://blog.csdn.net/super_he_pi/article/details/99713374
         proc = subprocess.Popen(command.split(), preexec_fn=os.setpgrp, env=new_env)
         child_processes.append(proc) # 将创建的子进程保存到子进程管理池中
@@ -188,7 +206,8 @@ def run_batch_commands(commands, envs, workspace_path, action, grep_command="tra
             
             
         time.sleep(60)  # add some delay between each job scheduling
-        num_running_jobs += 1
+        if gpu_id is None:
+            num_running_jobs += 1
 
     sleep_counter = 0
     while is_job_running(grep_command, count_command):
@@ -258,6 +277,7 @@ def main():
             # 2. train：只进行模型训练
             # 3. eval：只进行模型评估
             # 4. fine-tuning：继续训练（微调），将执行含有--load-weights参数的模型训练，不含评估操作
+            # 5. reports：生成报告，不含训练和评估操作
         # training settings
         ArgOption("--num_epochs", type=str, default="300"),
         ArgOption("--vocab", type=str, default='["hey","fire","fox"]'),
@@ -271,7 +291,10 @@ def main():
         ArgOption("--use_noise_dataset", type=str, default="True"),
         ArgOption("--num_mels", type=str, default="40"),
         ArgOption("--eval-freq", type=str, default="20"),
-        ArgOption("--device", type=str, default="cuda:0"),  # 添加 device 参数，默认值为 "cuda:0"
+        ArgOption("--device", type=str, default=""),  
+        # 如果device参数以"cuda:"开头，则将其解析为GPU ID，且仅使用指定的GPU ID运行训练和评估，所有并行进程都将在该GPU上运行
+        # 若不指定，则使用多GPU调度，并行进程数<=设备可用gpu数量
+        # 默认值为 ""，即若不指定device，默认使用多GPU调度
         # inference settings
         ArgOption("--inference_sequence", type=str, default="[0,1]"),
         ArgOption("--hop_size", type=float, default=0.05, help="hop size for threshold"),
@@ -280,9 +303,9 @@ def main():
         ArgOption("--positive_dataset_path", type=str, default="/data/positive_dataset"),
         ArgOption("--negative_dataset_path", type=str, default="/data/negative_dataset"),
         ArgOption("--noise_dataset_path", type=str, default="/data/MS-SNSD"),
-        ArgOption("--use-stitched-dataset", action="store_true"),
-        # 对于参数--use-stitched-datasets。参数的类型是 bool（布尔类型）。当提供这个参数时，args.use_stitched_dataset 的值将是 True。
-        # 如果你不提供这个参数，args.use_stitched_dataset 的值将保持为 False。
+        ArgOption("--use-stitched-datasets", action="store_true"),
+        # 对于参数--use-stitched-datasets。参数的类型是 bool（布尔类型）。当提供这个参数时，args.use_stitched_datasets 的值将是 True。
+        # 如果你不提供这个参数，args.use_stitched_datasets 的值将保持为 False。
     )
 
     args = apb.parser.parse_args()
@@ -308,8 +331,17 @@ def main():
     if args.use_given_model:
         Logger.info(f"指定模型种子: {args.given_model_seeds}")
     Logger.info(f"阈值步长: {args.hop_size}")
-    Logger.info(f"设备: {args.device}")
-    Logger.info(f"是否使用拼接数据集: {args.use_stitched_dataset}")
+    
+    # TODO: 提取指定GPU的ID
+    gpu_id = 5
+    if args.device and args.device.startswith("cuda:"):
+        try:
+            gpu_id = int(args.device.split(":")[1])
+            Logger.info(f"将使用指定的GPU: {gpu_id}")
+        except (IndexError, ValueError):
+            Logger.warning(f"无法解析设备参数: {args.device}，将使用多GPU调度")
+    
+    Logger.info(f"是否使用拼接数据集: {args.use_stitched_datasets}")
     Logger.info(f"数据集路径: 正样本-{args.positive_dataset_path}, 负样本-{args.negative_dataset_path}")
     Logger.info(f"实验类型: {args.exp_type}")
 
@@ -333,7 +365,7 @@ def main():
     
     # 不使用静态设置的数据集大小，使用动态计算的数据集大小
     # 统计数据集中的正例和负例数量
-    if args.use_stitched_dataset:
+    if args.use_stitched_datasets:
         dev_positive_path = os.path.join(args.positive_dataset_path, "stitched-metadata-dev.jsonl")
         test_positive_path = os.path.join(args.positive_dataset_path, "stitched-metadata-test.jsonl")
         dev_negative_path = os.path.join(args.negative_dataset_path, "stitched-metadata-dev.jsonl")
@@ -419,14 +451,14 @@ def main():
                 # ...
             workspace_path = get_workspace_path(args.workspace_name, seed)
             os.system("mkdir -p " + workspace_path)
-            if args.use_stitched_dataset:
+            if args.use_stitched_datasets:
                 command = (
                     "python -m training.run.train --model res8 --workspace " + workspace_path 
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path 
                     + " --eval-freq " + args.eval_freq
                     + " --eval-hop-size " + str(args.hop_size)
-                    + " --device "  + args.device
-                    + " --use-stitched-dataset"
+                    + " --device "  + "cuda:0"
+                    + " --use-stitched-datasets"
                 )
             else:
                 command = (
@@ -434,7 +466,7 @@ def main():
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path 
                     + " --eval-freq " + args.eval_freq
                     + " --eval-hop-size " + str(args.hop_size)
-                    + " --device "  + args.device
+                    + " --device "  + "cuda:0"
                 )
             training_commands.append(command)
             training_envs.append(env)
@@ -443,7 +475,7 @@ def main():
         if training_commands:
         # 在 Python 中，空列表（[]）在布尔上下文中被视为 False，而非空列表则被视为 True
             Logger.info(f"开始执行{len(training_commands)}个训练命令...")
-            run_batch_commands(training_commands, training_envs, workspace_path, action="train")
+            run_batch_commands(training_commands, training_envs, workspace_path, action="train", gpu_id=gpu_id)
         else:
             Logger.info("没有训练命令需要执行，请检查生成的训练命令！")
 
@@ -457,20 +489,20 @@ def main():
             env = {}
             env["SEED"] = seed
             workspace_path = get_workspace_path(args.workspace_name, seed)
-            if args.use_stitched_dataset:
+            if args.use_stitched_datasets:
                 command = (
                     "python -m training.run.train --eval --model res8 --workspace " + workspace_path
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path
                     + " --eval-hop-size " + str(args.hop_size)
-                    + " --device "  + args.device
-                    + " --use-stitched-dataset"
+                    + " --device "  + "cuda:0"
+                    + " --use-stitched-datasets"
                 )
             else:
                 command = (
                     "python -m training.run.train --eval --model res8 --workspace " + workspace_path
                     + " -i " + args.positive_dataset_path + " " + args.negative_dataset_path
                     + " --eval-hop-size " + str(args.hop_size)
-                    + " --device "  + args.device
+                    + " --device "  + "cuda:0"
                 )
                 
             eval_commands.append(command)
@@ -479,16 +511,16 @@ def main():
         if eval_commands:
             # 在 Python 中，空列表（[]）在布尔上下文中被视为 False，而非空列表则被视为 True
             Logger.info(f"开始执行{len(eval_commands)}个评估命令...")
-            run_batch_commands(eval_commands, eval_envs, workspace_path, action="eval")
+            run_batch_commands(eval_commands, eval_envs, workspace_path, action="eval", gpu_id=gpu_id)
         else:
             Logger.info("没有评估命令需要执行，请检查生成的评估命令！")
 
     # generate reports
-    # 只在需要评估的情况下生成报告
-    if args.exp_type in ['train-eval', 'eval']:
+    # 在训练及评估、仅评估、生成报告的选项下生成报告及ROC曲线
+    if args.exp_type in ['train-eval', 'eval', 'reports']:
         Logger.heading("=============== generating reports ===============")
         
-        # 获取当前时间戳
+        # 获取当前时间戳(开始生成报告的时间戳)
         now = datetime.now()
         dt_string = now.strftime("%Y%m%d%H%M%S")
         # 创建工作簿
@@ -566,8 +598,8 @@ def main():
         os.system(f"mkdir -p {report_dir}")
         
         # 命名报告命名（含精确到秒的时间戳）
-        clean_file_name = f"{report_dir}/{args.workspace_name}_clean_{dt_string}.xlsx"
-        noisy_file_name = f"{report_dir}/{args.workspace_name}_noisy_{dt_string}.xlsx"
+        clean_file_path = f"{report_dir}/{args.workspace_name}_clean_{dt_string}.xlsx"
+        noisy_file_path = f"{report_dir}/{args.workspace_name}_noisy_{dt_string}.xlsx"
 
 
         for seed_idx, seed in enumerate(seeds):
@@ -591,13 +623,14 @@ def main():
                         break
                     vals = result.split(",")
                     # 对于每一行记录，代码通过第一列的数据集名称来决定如何处理该行数据
-                    key = vals[0]
-                    start_col = col_mapping[key]
+                    key = vals[0] # 提取第一列作为数据集名称
+                    start_col = col_mapping[key] # 使用预定义的映射查找对应的起始列
                     # CSV文件中行的顺序可以随意排列，只要满足：
                     # 1. 每行的第一列是有效的数据集名称（如"Dev positive"、"Dev negative"等）
                     # 2. 后续列的数据按照 threshold、tp、tn、fp、fn 的顺序排列
                     # 3. 所有8种数据集类型都存在于文件中
-
+                    # 无论CSV行的顺序如何，只要每行内部格式正确，报告生成逻辑都能正常工作。
+                    
                     # 然后根据数据集名称是否包含"noisy"，将数据写入不同的报告表格
                     if "noisy" in key:
                         for metric_idx, metric in enumerate(vals[1:]):
@@ -606,9 +639,11 @@ def main():
                             noisy_sheet[cell_ind] = metric
 
                             target_metric = threshold + "_" + col_idx
-                            noisy_cols_aggregated[target_metric].append(float(metric))
-
-                            compute_aggregated_metrics(noisy_sheet, col_idx, np.array(noisy_cols_aggregated[target_metric]))
+                            try:
+                                noisy_cols_aggregated[target_metric].append(float(metric))
+                                compute_aggregated_metrics(noisy_sheet, col_idx, np.array(noisy_cols_aggregated[target_metric]))
+                            except ValueError:
+                                Logger.warning(f"无法将指标 {metric} 转换为浮点数，已跳过 (seed: {seed}, threshold: {threshold}, key: {key})")
                     else:
                         for metric_idx, metric in enumerate(vals[1:]):
                             col_idx = get_cell_idx(start_col, metric_idx)
@@ -616,15 +651,67 @@ def main():
                             clean_sheet[cell_ind] = metric
 
                             target_metric = threshold + "_" + col_idx
-                            clean_cols_aggregated[target_metric].append(float(metric))
-
-                            compute_aggregated_metrics(clean_sheet, col_idx, np.array(clean_cols_aggregated[target_metric]))
+                            try:
+                                clean_cols_aggregated[target_metric].append(float(metric))
+                                compute_aggregated_metrics(clean_sheet, col_idx, np.array(clean_cols_aggregated[target_metric]))
+                            except ValueError:
+                                Logger.warning(f"无法将指标 {metric} 转换为浮点数，已跳过 (seed: {seed}, threshold: {threshold}, key: {key})")
         # 在循环外部最后保存一次报告文件
-        clean_wb.save(clean_file_name)
-        noisy_wb.save(noisy_file_name)
-        Logger.info("-- report generation has been completed --")
-        Logger.info("\treport for clean setting is generated at ", clean_file_name)
-        Logger.info("\treport for noisy setting is generated at ", noisy_file_name)
+        
+        # openpyxl库的默认行为：创建一个新的Workbook对象时，它会自动生成一个名为"Sheet"的默认工作表。
+        # 删除默认的"Sheet"工作表
+        if "Sheet" in clean_wb.sheetnames:
+            clean_wb.remove(clean_wb["Sheet"])
+        if "Sheet" in noisy_wb.sheetnames:
+            noisy_wb.remove(noisy_wb["Sheet"])
+        
+        clean_wb.save(clean_file_path)
+        noisy_wb.save(noisy_file_path)
+        
+        Logger.info(f"\treport for clean setting is generated at {clean_file_path}")
+        Logger.info(f"\treport for noisy setting is generated at {noisy_file_path}")
+        Logger.info("=============== reports generation finished ===============")
+        
+        # 调用generate_roc.py生成ROC曲线
+        Logger.heading("=============== generating ROC curves ===============")
+        try:
+            # 提取xlsx文件名
+            clean_report_basename = os.path.basename(clean_file_path)
+            noisy_report_basename = os.path.basename(noisy_file_path)
+            
+            # 构建generate_roc命令
+            roc_cmd = [
+                "python", "-m", "training.run.generate_roc",
+                "--workspace_name", base_workspace_path,
+                "--clean_report_name", clean_report_basename,
+                "--noisy_report_name", noisy_report_basename,
+                # TODO: 依据train.py中输出的结果修改dev集和test集的总录音时长，未来可以考虑自动流水线
+                "--total_dev_len", "25739.7846",
+                "--total_test_len", "24278.9884"
+            ]
+            
+            # 执行命令
+            Logger.info(f"执行ROC曲线生成命令: {' '.join(roc_cmd)}")
+            result = subprocess.run(roc_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            
+            # 输出命令执行结果
+            Logger.info("ROC曲线生成成功！")
+            Logger.info(result.stdout.decode('utf-8'))
+            
+            # 如果有警告或错误信息
+            if result.stderr:
+                stderr_output = result.stderr.decode('utf-8')
+                if stderr_output.strip():
+                    Logger.warning("ROC曲线生成过程中的警告或错误信息:")
+                    Logger.warning(stderr_output)
+                    
+        except subprocess.CalledProcessError as e:
+            Logger.error(f"ROC曲线生成失败: {e}")
+            Logger.error(f"错误详情: {e.stderr.decode('utf-8') if e.stderr else '无详细信息'}")
+        except Exception as e:
+            Logger.error(f"调用ROC曲线生成时发生错误: {str(e)}")
+            
+        Logger.info("=============== ROC curves generation finished ===============")
 
 if __name__ == "__main__":
     main()
